@@ -6,8 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
@@ -24,6 +26,35 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+// RPC definitions.
+
+type RpcType string
+
+// RPC types
+const (
+	RpcTypeRequestTask RpcType = "request_task" // worker requests a task
+	RpcTypeFailTask    RpcType = "fail_task"    // worker tells coordinator that a task has failed
+	RpcTypeFinishTask  RpcType = "finish_task"  // worker tells coordinator that a task has been completed
+	RpcTypeHeartbeat   RpcType = "heartbeat"    // worker sends a heartbeat to the coordinator
+	RpcTypeExit        RpcType = "exit"         // coordinator tells worker to exit
+)
+
+type Args struct {
+	Type    RpcType
+	TaskId  int
+	TaskTyp TaskType
+}
+
+type Reply struct {
+	Type    RpcType
+	TaskId  int
+	TaskTyp TaskType
+	Files   []string // input files name for map, reduce task
+
+	// intermediate files are named as mr-X-Y, where X is the map task number, Y is the reduce task number
+	NMap    int // number of map tasks
+	NReduce int // number of reduce tasks
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
