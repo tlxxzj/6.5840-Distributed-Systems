@@ -122,7 +122,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
+	log.Printf("call error: %v\n", err)
 	return false
 }
 
@@ -131,50 +131,47 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 // repeat until there are no more tasks.
 func (w *ConcurrentWorker) runForever() {
 	for {
-		sleep := false // whether to sleep before the next loop
-
 		select {
 		case <-w.idle:
 			// ask the coordinator for a task
-			err := w.requestTask()
+			hasTask, err := w.requestTask()
 			if err != nil {
-				sleep = true
 				w.idle <- struct{}{}
-				log.Printf("failed to request task: %v", err)
+				log.Printf("failed to request task: %v\n", err)
 			}
 
 			// if the request is successful, execute the task
-			if err == nil {
+			if hasTask {
 				go w.doTask()
 			}
 		case <-time.After(1 * time.Second):
 			// send heartbeat to the coordinator
-			w.sendHeartbeat()
+			//w.sendHeartbeat()
 		case <-w.exit:
 			return
 		}
 
 		// wait for a while before the next loop
-		if sleep {
-			time.Sleep(1 * time.Second)
-		}
+		time.Sleep(1 * time.Second)
 	}
 }
 
 // ask the coordinator for a task
-func (w *ConcurrentWorker) requestTask() error {
+func (w *ConcurrentWorker) requestTask() (bool, error) {
 	args := &Args{
 		Type: RpcTypeRequestTask,
 	}
 	reply := &Reply{}
 
 	if !call("Coordinator.RemoteCall", args, reply) {
-		return fmt.Errorf("failed to request task")
+		return false, fmt.Errorf("failed to request task")
 	}
 
 	if reply.Type == RpcTypeExit {
 		w.exit <- struct{}{}
-		return nil
+		return false, nil
+	} else if reply.Type == RpcTypeNoTask {
+		return false, nil
 	}
 
 	w.taskType = reply.TaskTyp
@@ -183,7 +180,7 @@ func (w *ConcurrentWorker) requestTask() error {
 	w.nReduce = reply.NReduce
 	w.files = reply.Files
 
-	return nil
+	return true, nil
 }
 
 func (w *ConcurrentWorker) doTask() error {
@@ -261,7 +258,6 @@ func (w *ConcurrentWorker) doMapTask() error {
 // execute the reduce task
 func (w *ConcurrentWorker) doReduceTask() error {
 	// read intermediate files and call reduce function
-
 	kvm := make(map[string][]string)
 
 	for i := 0; i < w.nMap; i++ {
@@ -316,6 +312,7 @@ func (w *ConcurrentWorker) doReduceTask() error {
 	return nil
 }
 
+/*
 // send heartbeat to the coordinator
 func (w *ConcurrentWorker) sendHeartbeat() error {
 	args := &Args{
@@ -334,6 +331,7 @@ func (w *ConcurrentWorker) sendHeartbeat() error {
 	}
 	return nil
 }
+*/
 
 // report failure to the coordinator
 func (w *ConcurrentWorker) failTask() error {

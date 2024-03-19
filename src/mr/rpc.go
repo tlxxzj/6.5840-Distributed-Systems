@@ -35,8 +35,9 @@ const (
 	RpcTypeRequestTask RpcType = "request_task" // worker requests a task
 	RpcTypeFailTask    RpcType = "fail_task"    // worker tells coordinator that a task has failed
 	RpcTypeFinishTask  RpcType = "finish_task"  // worker tells coordinator that a task has been completed
-	RpcTypeHeartbeat   RpcType = "heartbeat"    // worker sends a heartbeat to the coordinator
-	RpcTypeExit        RpcType = "exit"         // coordinator tells worker to exit
+	RpcTypeNoTask      RpcType = "no_task"      // coordinator tells worker that there is no task available
+	//RpcTypeHeartbeat   RpcType = "heartbeat"    // worker sends a heartbeat to the coordinator
+	RpcTypeExit RpcType = "exit" // coordinator tells worker to exit
 )
 
 type Args struct {
