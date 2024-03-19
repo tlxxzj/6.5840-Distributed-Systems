@@ -15,10 +15,6 @@ import (
 // a task should be rescheduled if it takes too long to complete
 const TaskTimeoutSeconds = 10
 
-// max wait time for a worker to send a heartbeat.
-// if a worker fails to send a heartbeat within this time, it is considered dead.
-//const TaskHeartbeatTimeoutSeconds = 3
-
 // max wait time for a worker to exit after the entire job has been completed.
 const MaxWorkerExitWaitSeconds = 3
 
@@ -34,8 +30,7 @@ type Task struct {
 	Type      TaskType // type of the task: map or reduce
 	Scheduled bool     // whether the task has been scheduled
 	BeginTime int64    // the time when the task was scheduled
-	//LastHeartbeatTime int64    // the time when the last heartbeat from the worker was received
-	Done bool // whether the task has been completed
+	Done      bool     // whether the task has been completed
 }
 
 type Coordinator struct {
@@ -104,8 +99,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			Type:      TaskTypeMap,
 			Scheduled: false,
 			BeginTime: 0,
-			//LastHeartbeatTime: 0,
-			Done: false}
+			Done:      false}
 	}
 
 	// init reduce tasks
@@ -115,8 +109,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			Type:      TaskTypeReduce,
 			Scheduled: false,
 			BeginTime: 0,
-			//LastHeartbeatTime: 0,
-			Done: false}
+			Done:      false}
 	}
 
 	c.server()
@@ -227,9 +220,6 @@ func (c *Coordinator) handleRequestTask(args *Args, reply *Reply) error {
 		return fmt.Errorf("RpcTypeRequestTask expected, but got %v", args.Type)
 	}
 
-	// default reply type is no task.
-	reply.Type = RpcTypeNoTask
-
 	if !c.mapDone {
 		// find the first unscheduled map task and schedule it.
 		for i := 0; i < c.nMap; i++ {
@@ -239,7 +229,6 @@ func (c *Coordinator) handleRequestTask(args *Args, reply *Reply) error {
 			if !task.Scheduled {
 				task.Scheduled = true
 				task.BeginTime = time.Now().Unix()
-				//task.LastHeartbeatTime = task.BeginTime
 				reply.Type = RpcTypeRequestTask
 				reply.TaskId = i
 				reply.TaskTyp = TaskTypeMap
@@ -259,7 +248,6 @@ func (c *Coordinator) handleRequestTask(args *Args, reply *Reply) error {
 			if !task.Scheduled {
 				task.Scheduled = true
 				task.BeginTime = time.Now().Unix()
-				//task.LastHeartbeatTime = task.BeginTime
 				reply.Type = RpcTypeRequestTask
 				reply.TaskId = i
 				reply.TaskTyp = TaskTypeReduce
@@ -313,24 +301,6 @@ func (c *Coordinator) handleFinishTask(args *Args, reply *Reply) error {
 	return nil
 }
 
-/*
-func (c *Coordinator) handleHeartbeat(args *Args, reply *Reply) error {
-	if args.Type != RpcTypeHeartbeat {
-		return fmt.Errorf("RpcTypeHeartbeat expected, but got %v", args.Type)
-	}
-
-	// update the last heartbeat time of the task.
-	if args.TaskTyp == TaskTypeMap {
-		c.mapTasks[args.TaskId].LastHeartbeatTime = time.Now().Unix()
-	} else if args.TaskTyp == TaskTypeReduce {
-		c.reduceTasks[args.TaskId].LastHeartbeatTime = time.Now().Unix()
-	}
-
-	reply.Type = RpcTypeHeartbeat
-	return nil
-}
-*/
-
 func (c *Coordinator) RemoteCall(args *Args, reply *Reply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -341,6 +311,9 @@ func (c *Coordinator) RemoteCall(args *Args, reply *Reply) error {
 		return nil
 	}
 
+	// default reply type is no task.
+	reply.Type = RpcTypeNoTask
+
 	switch args.Type {
 	case RpcTypeRequestTask:
 		return c.handleRequestTask(args, reply)
@@ -348,8 +321,6 @@ func (c *Coordinator) RemoteCall(args *Args, reply *Reply) error {
 		return c.handleFailTask(args, reply)
 	case RpcTypeFinishTask:
 		return c.handleFinishTask(args, reply)
-	//case RpcTypeHeartbeat:
-	//	return c.handleHeartbeat(args, reply)
 	default:
 		return fmt.Errorf("invalid RPC type: %v", args.Type)
 	}

@@ -38,9 +38,6 @@ type ConcurrentWorker struct {
 	mapf    func(string, string) []KeyValue // map function
 	reducef func(string, []string) string   // reduce function
 
-	idle chan struct{} // signal channel for the worker to wait for a task
-	exit chan struct{} // signal channel for the worker to exit
-
 	taskType TaskType
 	taskId   int
 	nMap     int
@@ -48,6 +45,7 @@ type ConcurrentWorker struct {
 
 	files []string // input files
 
+	exit bool // exit flag, coordinator will tell the worker to exit
 }
 
 // use ihash(key) % NReduce to choose the reduce
@@ -71,10 +69,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	worker := ConcurrentWorker{
 		mapf:    mapf,
 		reducef: reducef,
-		idle:    make(chan struct{}, 1),
-		exit:    make(chan struct{}, 1),
+		exit:    false,
 	}
-	worker.idle <- struct{}{}
 	worker.runForever()
 }
 
@@ -130,25 +126,17 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 // execute the task, and report the result.
 // repeat until there are no more tasks.
 func (w *ConcurrentWorker) runForever() {
-	for {
-		select {
-		case <-w.idle:
-			// ask the coordinator for a task
-			hasTask, err := w.requestTask()
-			if err != nil {
-				w.idle <- struct{}{}
-				log.Printf("failed to request task: %v\n", err)
-			}
+	for !w.exit {
 
-			// if the request is successful, execute the task
-			if hasTask {
-				go w.doTask()
-			}
-		case <-time.After(1 * time.Second):
-			// send heartbeat to the coordinator
-			//w.sendHeartbeat()
-		case <-w.exit:
-			return
+		// ask the coordinator for a task
+		hasTask, err := w.requestTask()
+		if err != nil {
+			log.Printf("failed to request task: %v\n", err)
+		}
+
+		// if the request is successful, execute the task
+		if hasTask {
+			w.doTask()
 		}
 
 		// wait for a while before the next loop
@@ -168,7 +156,7 @@ func (w *ConcurrentWorker) requestTask() (bool, error) {
 	}
 
 	if reply.Type == RpcTypeExit {
-		w.exit <- struct{}{}
+		w.exit = true
 		return false, nil
 	} else if reply.Type == RpcTypeNoTask {
 		return false, nil
@@ -198,9 +186,6 @@ func (w *ConcurrentWorker) doTask() error {
 	} else {
 		w.finishTask()
 	}
-
-	// mark the worker as idle
-	w.idle <- struct{}{}
 
 	return err
 }
@@ -312,27 +297,6 @@ func (w *ConcurrentWorker) doReduceTask() error {
 	return nil
 }
 
-/*
-// send heartbeat to the coordinator
-func (w *ConcurrentWorker) sendHeartbeat() error {
-	args := &Args{
-		Type:    RpcTypeHeartbeat,
-		TaskTyp: w.taskType,
-		TaskId:  w.taskId,
-	}
-	reply := &Reply{}
-
-	if !call("Coordinator.RemoteCall", args, reply) {
-		return fmt.Errorf("failed to send heartbeat")
-	}
-
-	if reply.Type == RpcTypeExit {
-		w.exit <- struct{}{}
-	}
-	return nil
-}
-*/
-
 // report failure to the coordinator
 func (w *ConcurrentWorker) failTask() error {
 	args := &Args{
@@ -347,7 +311,7 @@ func (w *ConcurrentWorker) failTask() error {
 	}
 
 	if reply.Type == RpcTypeExit {
-		w.exit <- struct{}{}
+		w.exit = true
 	}
 	return nil
 }
@@ -366,7 +330,7 @@ func (w *ConcurrentWorker) finishTask() error {
 	}
 
 	if reply.Type == RpcTypeExit {
-		w.exit <- struct{}{}
+		w.exit = true
 	}
 	return nil
 }
