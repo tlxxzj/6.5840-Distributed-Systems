@@ -22,8 +22,8 @@ type OperationResult struct {
 type KVServer struct {
 	mu sync.Mutex
 
-	data         map[string]string         // key-value store
-	lastClientOp map[int64]OperationResult // last operation result for each client
+	data         map[string]string          // key-value store
+	lastClientOp map[int64]*OperationResult // last operation result for each client
 }
 
 // detect duplicate operation
@@ -38,6 +38,7 @@ func (kv *KVServer) handleDuplicateOp(args *Args, reply *Reply) bool {
 	return false
 }
 
+// Get value for the key, if the key does not exist, return "".
 func (kv *KVServer) handleGet(args *Args, reply *Reply) {
 	value, ok := kv.data[args.Key]
 	if !ok {
@@ -48,17 +49,32 @@ func (kv *KVServer) handleGet(args *Args, reply *Reply) {
 
 	// delete last operation result for the client, release memory
 	delete(kv.lastClientOp, args.ClientId)
+
+	// Get operation is idempotent, so we don't need to store the result
 }
 
+// Set value for key, if key exists, overwrite the value.
 func (kv *KVServer) handlePut(args *Args, reply *Reply) {
 	if kv.handleDuplicateOp(args, reply) {
 		return
 	}
 
 	kv.data[args.Key] = args.Value
-	kv.lastClientOp[args.ClientId] = OperationResult{Seq: args.Seq, Value: reply.Value}
+
+	reply.Value = ""
+
+	// Put operation is not idempotent, so we need to store the result
+	lastOp, ok := kv.lastClientOp[args.ClientId]
+	if ok {
+		lastOp.Seq = args.Seq
+		lastOp.Value = reply.Value
+	} else {
+		kv.lastClientOp[args.ClientId] = &OperationResult{Seq: args.Seq, Value: reply.Value}
+	}
 }
 
+// Append value to key's value and returns the old value.
+// For a non-existent key, it is treated as an empty string.
 func (kv *KVServer) handleAppend(args *Args, reply *Reply) {
 	if kv.handleDuplicateOp(args, reply) {
 		return
@@ -71,7 +87,15 @@ func (kv *KVServer) handleAppend(args *Args, reply *Reply) {
 	} else {
 		kv.data[args.Key] = value + args.Value
 	}
-	kv.lastClientOp[args.ClientId] = OperationResult{Seq: args.Seq, Value: reply.Value}
+
+	// Append operation is not idempotent, so we need to store the result
+	lastOp, ok := kv.lastClientOp[args.ClientId]
+	if ok {
+		lastOp.Seq = args.Seq
+		lastOp.Value = reply.Value
+	} else {
+		kv.lastClientOp[args.ClientId] = &OperationResult{Seq: args.Seq, Value: reply.Value}
+	}
 }
 
 func (kv *KVServer) RemoteCall(args *Args, reply *Reply) {
@@ -95,7 +119,7 @@ func StartKVServer() *KVServer {
 	// You may need initialization code here.
 
 	kv.data = make(map[string]string)
-	kv.lastClientOp = make(map[int64]OperationResult)
+	kv.lastClientOp = make(map[int64]*OperationResult)
 
 	return kv
 }
