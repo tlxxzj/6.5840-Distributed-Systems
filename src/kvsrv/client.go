@@ -1,13 +1,18 @@
 package kvsrv
 
-import "6.5840/labrpc"
-import "crypto/rand"
-import "math/big"
+import (
+	"crypto/rand"
+	"math/big"
+	"sync/atomic"
 
+	"6.5840/labrpc"
+)
 
 type Clerk struct {
 	server *labrpc.ClientEnd
-	// You will have to modify this struct.
+
+	id  int64        // client id
+	seq atomic.Int64 // sequence number, increase by 1 for each request
 }
 
 func nrand() int64 {
@@ -21,6 +26,10 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
 	// You'll have to add code here.
+
+	ck.id = nrand() // generate a random client id
+	ck.seq.Store(0) // initialize sequence number to 0
+
 	return ck
 }
 
@@ -35,29 +44,33 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
-	return ""
-}
-
-// shared by Put and Append.
-//
-// you can send an RPC with code like this:
-// ok := ck.server.Call("KVServer."+op, &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-func (ck *Clerk) PutAppend(key string, value string, op string) string {
-	// You will have to modify this function.
-	return ""
+	return ck.call(OpGet, key, "")
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.call(OpPut, key, value)
 }
 
 // Append value to key's value and return that value
 func (ck *Clerk) Append(key string, value string) string {
-	return ck.PutAppend(key, value, "Append")
+	return ck.call(OpAppend, key, value)
+}
+
+func (ck *Clerk) call(op OperationType, key string, value string) string {
+	args := &Args{
+		Op:       op,
+		Key:      key,
+		Value:    value,
+		ClientId: ck.id,
+		Seq:      ck.seq.Add(1), // increase sequence number by 1
+	}
+
+	reply := &Reply{}
+
+	ok := false
+	for !ok {
+		ok = ck.server.Call("KVServer.RemoteCall", args, reply)
+	}
+
+	return reply.Value
 }
