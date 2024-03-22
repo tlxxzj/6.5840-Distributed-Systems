@@ -30,10 +30,10 @@ import (
 )
 
 // interval for sending heartbeats to followers
-const HeartbeatInterval = 200 * time.Millisecond
+const HeartbeatInterval = 100 * time.Millisecond
 
 // timeout for receiving heartbeats from leader
-const HeartbeatTimeout = 2 * HeartbeatInterval
+const HeartbeatTimeout = 3 * HeartbeatInterval
 
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -84,7 +84,10 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
 
-	return rf.term, rf.role == Leader
+	term := rf.term
+	isLeader := rf.role == Leader
+
+	return term, isLeader
 }
 
 // save Raft's persistent state to stable storage,
@@ -314,6 +317,10 @@ func (rf *Raft) runCandidate() {
 	DPrintf("server %d run as candidate", rf.me)
 
 	rf.mu.Lock()
+	if rf.role != Candidate {
+		rf.mu.Unlock()
+		return
+	}
 	rf.term++
 	rf.votedFor = rf.me
 
@@ -338,12 +345,10 @@ func (rf *Raft) runCandidate() {
 			args := requestArgs
 			reply := RequestVoteReply{}
 
-			ok := false
-			for !ok && rf.getRole() == Candidate {
-				ok = rf.sendRequestVote(server, &args, &reply)
-				if !ok {
-					time.Sleep(HeartbeatInterval)
-				}
+			ok := rf.sendRequestVote(server, &args, &reply)
+			if !ok {
+				voteResultCh <- false
+				return
 			}
 
 			rf.mu.Lock()
@@ -351,6 +356,7 @@ func (rf *Raft) runCandidate() {
 
 			// return if not candidate anymore
 			if rf.role != Candidate {
+				voteResultCh <- false
 				return
 			}
 
@@ -367,27 +373,29 @@ func (rf *Raft) runCandidate() {
 
 			voteResultCh <- reply.VoteGranted
 		}
-
 		rf.goFunc(f)
-
 	}
 
 	// wait for votes from other servers
 	majority := rf.nServer/2 + 1
 	nWin := 1
-	timeout := time.After(HeartbeatTimeout)
+	nLose := 0
+	electionTimeout := time.After(HeartbeatTimeout)
 	isTimeout := false
-	for !isTimeout && rf.getRole() == Candidate && nWin < majority {
+	for !isTimeout && rf.getRole() == Candidate && nWin < majority && nLose < majority {
 		select {
 		case voteGranted := <-voteResultCh:
 			if voteGranted {
 				nWin++
+			} else {
+				nLose++
 			}
-		case <-timeout:
+		case <-electionTimeout:
 			isTimeout = true
 		}
 	}
 
+	DPrintf("server %d received %d votes, %d votes lost", rf.me, nWin, nLose)
 	// convert to leader if received majority votes, otherwise convert to follower
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -424,41 +432,43 @@ func (rf *Raft) runLeader() {
 // send AppendEntries RPCs to followers
 func (rf *Raft) runFollowerWorker(server int) {
 	for rf.getRole() == Leader {
-		rf.mu.RLock()
-		args := AppendEntriesArgs{
-			Term:     rf.term,
-			LeaderId: rf.me,
-		}
-		rf.mu.RUnlock()
 
-		reply := AppendEntriesReply{}
-
-		ok := false
-		for !ok && rf.getRole() == Leader {
-			ok = rf.sendAppendEntries(server, &args, &reply)
-			if !ok {
-				time.Sleep(HeartbeatInterval)
+		f := func() {
+			rf.mu.RLock()
+			args := AppendEntriesArgs{
+				Term:     rf.term,
+				LeaderId: rf.me,
 			}
-		}
+			rf.mu.RUnlock()
 
-		rf.mu.Lock()
+			reply := AppendEntriesReply{}
 
-		// return if not leader anymore
-		if rf.role != Leader {
+			ok := rf.sendAppendEntries(server, &args, &reply)
+			if !ok {
+				return
+			}
+
+			rf.mu.Lock()
+
+			// return if not leader anymore
+			if rf.role != Leader {
+				rf.mu.Unlock()
+				return
+			}
+
+			// set currentTerm = term if term > currentTerm, convert to follower
+			if reply.Term > rf.term {
+				rf.term = reply.Term
+				rf.role = Follower
+				rf.votedFor = -1
+				rf.lastHeartbeatTime = time.Now()
+				rf.mu.Unlock()
+				return
+			}
 			rf.mu.Unlock()
-			return
 		}
 
-		// set currentTerm = term if term > currentTerm, convert to follower
-		if reply.Term > rf.term {
-			rf.term = reply.Term
-			rf.role = Follower
-			rf.votedFor = -1
-			rf.lastHeartbeatTime = time.Now()
-		}
-
-		rf.mu.Unlock()
-
+		rf.goFunc(f)
 		time.Sleep(HeartbeatInterval)
 	}
 }
