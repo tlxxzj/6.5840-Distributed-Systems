@@ -14,6 +14,7 @@ for i in $(seq 1 $runs); do
     echo '***' RUNNING TESTING TRIAL $i '***'
 
     timeout -k 2s 1000s go test -race -run 3A
+    timeout -k 2s 1000s go test -race -run 3B
 
     if [ $? -ne 0 ]; then
         echo '***' FAILED TESTS IN TRIAL $i
