@@ -515,6 +515,16 @@ func (rf *Raft) runFollowerWorker(server int) {
 	for rf.getRole() == Leader {
 		select {
 		case <-rf.triggerSyncChs[server]:
+			// wait for all other triggerSyncChs[server] to be consumed
+			more := true
+			for more {
+				select {
+				case <-rf.triggerSyncChs[server]:
+				default:
+					more = false
+				}
+			}
+
 			rf.goFunc(func() {
 				rf.syncLogEntries(server)
 			})
