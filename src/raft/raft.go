@@ -300,6 +300,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, rf.nServer)
 	rf.matchIndex = make([]int, rf.nServer)
 	rf.triggerSyncChs = make([]chan struct{}, rf.nServer)
+	for i := 0; i < rf.nServer; i++ {
+		rf.triggerSyncChs[i] = make(chan struct{}, 1)
+	}
 	rf.triggerApplyCh = make(chan struct{}, 1)
 
 	// initialize from state persisted before a crash
@@ -480,9 +483,10 @@ func (rf *Raft) runLeader() {
 		rf.nextIndex[i] = rf.logStorage.LastIndex() + 1
 		rf.matchIndex[i] = 0
 
-		rf.triggerSyncChs[i] = make(chan struct{}, 1)
 		// trigger first heartbeat
-		rf.triggerSyncChs[i] <- struct{}{}
+		rf.goFunc(func() {
+			rf.triggerSyncChs[i] <- struct{}{}
+		})
 	}
 	rf.mu.Unlock()
 
