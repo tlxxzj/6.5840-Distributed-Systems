@@ -602,9 +602,9 @@ func (rf *Raft) syncLogEntries(server int) {
 		// sortedMatchIndex[2] is 3, which is the majority matchIndex
 		majorityIndex := (rf.nServer - 1) / 2
 
-		// update commitIndex
+		// update commitIndex newCommitIndex >= majority matchIndex log[newCommitIndex].term == currentTerm
 		newCommitIndex := sortedMatchIndex[majorityIndex]
-		if newCommitIndex > rf.commitIndex {
+		if newCommitIndex > rf.commitIndex && rf.logStorage.Get(newCommitIndex).Term == rf.term {
 			rf.commitIndex = newCommitIndex
 			DPrintf("server %d update commitIndex to %d", rf.me, rf.commitIndex)
 			// trigger applyWorker
