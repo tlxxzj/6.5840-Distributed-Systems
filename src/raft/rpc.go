@@ -24,6 +24,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.lastHeartbeatTime = time.Now()
 	}
 
+	// if candidate's log is not up-to-date, reject vote
+	// "up-to-date" means:
+	// 1. if two logs have last entries with different terms, the log with the later term is more up-to-date
+	// 2. if two logs end with the same term, the log is longer is more up-to-date
+	lastEntry := rf.logStorage.Last()
+	if args.LastLogTerm < lastEntry.Term ||
+		(args.LastLogTerm == lastEntry.Term && args.LastLogIndex < lastEntry.Index) {
+		return
+	}
+
 	// if votedFor is -1 or candidateId, grant vote
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		rf.votedFor = args.CandidateId
@@ -36,7 +46,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Server %d received AppendEntries from %d", rf.me, args.LeaderId)
+	//DPrintf("Server %d received AppendEntries from %d", rf.me, args.LeaderId)
 
 	reply.Term = rf.term
 	reply.Success = false
@@ -58,4 +68,49 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.votedFor = -1
 	}
 
+	// prevLogIndex does not exist in log
+	lastEntry := rf.logStorage.Last()
+	if args.PrevLogIndex > lastEntry.Index {
+		reply.ConflictIndex = lastEntry.Index + 1
+		reply.ConflictTerm = -1
+		return
+	}
+
+	// prevLogTerm does not match
+	// set conflictTerm to the term of the conflicting entry
+	// set conflictIndex to the first index of the conflicting term
+	if args.PrevLogTerm != rf.logStorage.Get(args.PrevLogIndex).Term {
+		reply.ConflictTerm = rf.logStorage.Get(args.PrevLogIndex).Term
+		ConflictEntry := rf.logStorage.FindFirstByTerm(reply.ConflictTerm)
+		reply.ConflictIndex = ConflictEntry.Index
+		return
+	}
+
+	// append new entries
+	for i, entry := range args.Entries {
+		if entry.Index > rf.logStorage.LastIndex() {
+			// append new entries if they are not in the log
+			rf.logStorage.Append(args.Entries[i:]...)
+			break
+		} else if entry.Term != rf.logStorage.Get(entry.Index).Term {
+			// delete existing entries that conflict with new entries
+			rf.logStorage.DeleteFrom(entry.Index)
+			rf.logStorage.Append(args.Entries[i:]...)
+			break
+		}
+	}
+
+	// update commitIndex
+	if args.LeaderCommit > rf.commitIndex {
+		newCommitIndex := min(args.LeaderCommit, rf.logStorage.LastIndex())
+		if newCommitIndex > rf.commitIndex {
+			rf.commitIndex = newCommitIndex
+			rf.goFunc(func() {
+				rf.triggerApplyCh <- struct{}{}
+			})
+			//DPrintf("Server %d update commitIndex to %d", rf.me, rf.commitIndex)
+		}
+	}
+
+	reply.Success = true
 }
