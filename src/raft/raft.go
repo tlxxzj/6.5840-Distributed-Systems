@@ -644,6 +644,7 @@ func (rf *Raft) applyWorker() {
 			rf.mu.RLock()
 			if rf.commitIndex > rf.appliedIndex {
 				entries := rf.logStorage.GetRange(rf.appliedIndex+1, rf.commitIndex+1)
+				newAppliedIndex := rf.commitIndex
 				rf.mu.RUnlock()
 
 				for _, entry := range entries {
@@ -653,9 +654,10 @@ func (rf *Raft) applyWorker() {
 						CommandIndex: entry.Index,
 					}
 					rf.applyCh <- applyMsg
+					newAppliedIndex = entry.Index
 				}
 
-				rf.appliedIndex = rf.commitIndex
+				rf.appliedIndex = newAppliedIndex
 			} else {
 				rf.mu.RUnlock()
 			}
