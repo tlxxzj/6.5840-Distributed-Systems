@@ -556,8 +556,10 @@ func (rf *Raft) syncLogEntries(server int) {
 	args.PrevLogIndex = nextIndex - 1
 	args.PrevLogTerm = rf.logStorage.Get(nextIndex - 1).Term
 
+	// copy entries to avoid data race
 	entries := rf.logStorage.GetRange(nextIndex, rf.logStorage.LastIndex()+1)
-	args.Entries = entries
+	args.Entries = make([]*LogEntry, len(entries))
+	copy(args.Entries, entries)
 
 	rf.mu.RUnlock()
 
@@ -658,6 +660,8 @@ func (rf *Raft) applyWorker() {
 			rf.mu.RLock()
 			if rf.commitIndex > rf.appliedIndex {
 				entries := rf.logStorage.GetRange(rf.appliedIndex+1, rf.commitIndex+1)
+				// copy entries to avoid data race
+				entries = append([]*LogEntry{}, entries...)
 				newAppliedIndex := rf.commitIndex
 				rf.mu.RUnlock()
 
