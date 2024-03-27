@@ -108,7 +108,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// update commitIndex
 	if args.LeaderCommit > rf.commitIndex {
 		newCommitIndex := min(args.LeaderCommit, rf.logStorage.LastIndex())
-		if newCommitIndex > rf.commitIndex {
+		// Figure 8, only commit entries from current term
+		if newCommitIndex > rf.commitIndex && rf.logStorage.Get(newCommitIndex).Term == rf.term {
 			rf.commitIndex = newCommitIndex
 			rf.goFunc(func() {
 				select {
