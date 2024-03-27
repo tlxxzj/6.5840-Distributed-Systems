@@ -111,7 +111,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if newCommitIndex > rf.commitIndex {
 			rf.commitIndex = newCommitIndex
 			rf.goFunc(func() {
-				rf.triggerApplyCh <- struct{}{}
+				select {
+				case rf.triggerApplyCh <- struct{}{}:
+				default:
+				}
 			})
 			//DPrintf("Server %d update commitIndex to %d", rf.me, rf.commitIndex)
 

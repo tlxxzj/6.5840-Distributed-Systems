@@ -447,6 +447,8 @@ func (rf *Raft) runCandidate() {
 	rf.votedFor = rf.me
 	rf.persist()
 
+	currentTerm := rf.term
+
 	// construct RequestVoteArgs
 	lastEntry := rf.logStorage.Last()
 	requestArgs := RequestVoteArgs{
@@ -526,7 +528,7 @@ func (rf *Raft) runCandidate() {
 	// convert to leader if received majority votes, otherwise convert to follower
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.role == Candidate && nWin >= majority {
+	if rf.role == Candidate && nWin >= majority && rf.term == currentTerm {
 		rf.role = Leader
 	} else {
 		rf.role = Follower
@@ -618,6 +620,8 @@ func (rf *Raft) syncLogEntries(server int) {
 		return
 	}
 
+	currentTerm := rf.term
+
 	args := AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
@@ -645,7 +649,8 @@ func (rf *Raft) syncLogEntries(server int) {
 	// handle reply
 
 	rf.mu.Lock()
-	if rf.role != Leader {
+	// return if not leader anymore or term has changed
+	if rf.role != Leader || rf.term != currentTerm {
 		rf.mu.Unlock()
 		return
 	}
