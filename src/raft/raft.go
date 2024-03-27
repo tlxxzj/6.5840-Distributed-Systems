@@ -131,30 +131,12 @@ func (rf *Raft) persist() {
 	e.Encode(rf.term)
 	e.Encode(rf.votedFor)
 
-	// persist committed log entries
-	rf.persistLog()
-
-	// persist uncommitted log entries
-	w2 := new(bytes.Buffer)
-	e2 := labgob.NewEncoder(w2)
-	for i := rf.commitIndex + 1; i <= rf.logStorage.LastIndex(); i++ {
-		entry := rf.logStorage.Get(i)
-		e2.Encode(entry)
-	}
-	e.Encode(append(rf.logWriter.Bytes(), w2.Bytes()...))
+	// persist log entries
+	e.Encode(rf.logStorage.GetRange(1, rf.logStorage.LastIndex()+1))
 
 	// save state to persister
 	state := w.Bytes()
 	rf.persister.Save(state, nil)
-}
-
-// persist committed log entries
-func (rf *Raft) persistLog() {
-	for rf.persistIndex < rf.commitIndex {
-		rf.persistIndex++
-		entry := rf.logStorage.Get(rf.persistIndex)
-		rf.logEncoder.Encode(entry)
-	}
 }
 
 // restore previously persisted state.
@@ -178,6 +160,8 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.yyy = yyy
 	// }
 
+	DPrintf("server %d readPersist", rf.me)
+
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 
@@ -189,22 +173,14 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	rf.term = term
 	rf.votedFor = votedFor
+	DPrintf("server %d term %d votedFor %d", rf.me, rf.term, rf.votedFor)
 
 	// restore log entries
-	var b []byte
-	if d.Decode(&b) != nil {
+	var entries []*LogEntry
+	if d.Decode(&entries) != nil {
 		panic(fmt.Sprintf("server %d failed to decode log entries", rf.me))
 	}
-	// decode log entries
-	r = bytes.NewBuffer(b)
-	d = labgob.NewDecoder(r)
-	for {
-		var entry LogEntry
-		if d.Decode(&entry) != nil {
-			break
-		}
-		rf.logStorage.Append(&entry)
-	}
+	rf.logStorage.Append(entries...)
 }
 
 // the service says it has created a snapshot that has
@@ -280,6 +256,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.logStorage.Append(entry)
+	rf.persist()
 	// update matchIndex for leader itself
 	rf.matchIndex[rf.me] = entry.Index
 
@@ -715,9 +692,6 @@ func (rf *Raft) syncLogEntries(server int) {
 				default:
 				}
 			})
-
-			// persist state
-			rf.persist()
 		}
 	} else {
 		// if AppendEntries fails because of log inconsistency: decrement nextIndex and retry

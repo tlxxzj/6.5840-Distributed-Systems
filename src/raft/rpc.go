@@ -118,9 +118,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				}
 			})
 			//DPrintf("Server %d update commitIndex to %d", rf.me, rf.commitIndex)
-
-			rf.persist()
 		}
+	}
+
+	if len(args.Entries) > 0 {
+		rf.persist()
 	}
 
 	reply.Success = true
