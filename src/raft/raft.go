@@ -131,15 +131,24 @@ func (rf *Raft) persist() {
 	e.Encode(rf.term)
 	e.Encode(rf.votedFor)
 
-	// persist log entries
+	// persist committed log entries
 	rf.persistLog()
-	e.Encode(rf.logWriter.Bytes())
+
+	// persist uncommitted log entries
+	w2 := new(bytes.Buffer)
+	e2 := labgob.NewEncoder(w2)
+	for i := rf.commitIndex + 1; i <= rf.logStorage.LastIndex(); i++ {
+		entry := rf.logStorage.Get(i)
+		e2.Encode(entry)
+	}
+	e.Encode(append(rf.logWriter.Bytes(), w2.Bytes()...))
 
 	// save state to persister
 	state := w.Bytes()
 	rf.persister.Save(state, nil)
 }
 
+// persist committed log entries
 func (rf *Raft) persistLog() {
 	for rf.persistIndex < rf.commitIndex {
 		rf.persistIndex++
