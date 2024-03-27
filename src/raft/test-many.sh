@@ -13,7 +13,7 @@ for i in $(seq 1 $runs); do
     echo '-----------------------------------'
     echo '***' RUNNING TESTING TRIAL $i '***'
 
-    timeout -k 2s 1000s go test -race -run '3A|3B'
+    timeout -k 2s 1000s go test -race -run '3A|3B|3C'
 
     if [ $? -ne 0 ]; then
         echo '***' FAILED TESTS IN TRIAL $i
