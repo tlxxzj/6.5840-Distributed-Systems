@@ -21,6 +21,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.role = Follower
 		rf.term = args.Term
 		rf.votedFor = -1
+		rf.persist()
 		rf.lastHeartbeatTime = time.Now()
 	}
 
@@ -36,7 +37,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// if votedFor is -1 or candidateId, grant vote
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
-		rf.votedFor = args.CandidateId
+		if rf.votedFor == -1 {
+			rf.votedFor = args.CandidateId
+			rf.persist()
+		}
 		reply.VoteGranted = true
 		rf.lastHeartbeatTime = time.Now()
 	}
@@ -66,6 +70,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.role = Follower
 		rf.term = args.Term
 		rf.votedFor = -1
+		rf.persist()
 	}
 
 	// prevLogIndex does not exist in log
@@ -109,6 +114,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.triggerApplyCh <- struct{}{}
 			})
 			//DPrintf("Server %d update commitIndex to %d", rf.me, rf.commitIndex)
+
+			rf.persist()
 		}
 	}
 

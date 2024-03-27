@@ -20,6 +20,8 @@ package raft
 import (
 	//	"bytes"
 
+	"bytes"
+	"fmt"
 	"math/rand"
 	"slices"
 	"sync"
@@ -27,6 +29,7 @@ import (
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -86,6 +89,11 @@ type Raft struct {
 	matchIndex     []int           // for each server, index of highest log entry known to be replicated on server
 	triggerSyncChs []chan struct{} // channels to trigger log sync
 	triggerApplyCh chan struct{}   // channel to trigger log apply
+
+	// 3C
+	persistIndex int                // index of the last log entry persisted
+	logWriter    *bytes.Buffer      // writer to persist log entries
+	logEncoder   *labgob.LabEncoder // encoder to encode log entries
 }
 
 // return currentTerm and whether this server
@@ -116,6 +124,28 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// raftstate := w.Bytes()
 	// rf.persister.Save(raftstate, nil)
+
+	// persist term and votedFor
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.term)
+	e.Encode(rf.votedFor)
+
+	// persist log entries
+	rf.persistLog()
+	e.Encode(rf.logWriter.Bytes())
+
+	// save state to persister
+	state := w.Bytes()
+	rf.persister.Save(state, nil)
+}
+
+func (rf *Raft) persistLog() {
+	for rf.persistIndex < rf.commitIndex {
+		rf.persistIndex++
+		entry := rf.logStorage.Get(rf.persistIndex)
+		rf.logEncoder.Encode(entry)
+	}
 }
 
 // restore previously persisted state.
@@ -136,6 +166,34 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	// restore term and votedFor
+	var term int
+	var votedFor int
+	if d.Decode(&term) != nil || d.Decode(&votedFor) != nil {
+		panic(fmt.Sprintf("server %d failed to decode term and votedFor", rf.me))
+	}
+	rf.term = term
+	rf.votedFor = votedFor
+
+	// restore log entries
+	var b []byte
+	if d.Decode(&b) != nil {
+		panic(fmt.Sprintf("server %d failed to decode log entries", rf.me))
+	}
+	// decode log entries
+	r = bytes.NewBuffer(b)
+	d = labgob.NewDecoder(r)
+	for {
+		var entry LogEntry
+		if d.Decode(&entry) != nil {
+			break
+		}
+		rf.logStorage.Append(&entry)
+	}
 }
 
 // the service says it has created a snapshot that has
@@ -223,7 +281,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 		server := i
 		rf.goFunc(func() {
-			rf.triggerSyncChs[server] <- struct{}{}
+			select {
+			case rf.triggerSyncChs[server] <- struct{}{}:
+			default:
+			}
 		})
 	}
 
@@ -250,7 +311,7 @@ func (rf *Raft) Kill() {
 	// set role to Dead to stop runForever
 	rf.role = Dead
 	// close triggerApplyCh to stop applyWorker
-	close(rf.triggerApplyCh)
+	// close(rf.triggerApplyCh)
 }
 
 func (rf *Raft) killed() bool {
@@ -304,6 +365,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		rf.triggerSyncChs[i] = make(chan struct{}, 1)
 	}
 	rf.triggerApplyCh = make(chan struct{}, 1)
+
+	// 3C
+	rf.persistIndex = rf.commitIndex
+	rf.logWriter = &bytes.Buffer{}
+	rf.logEncoder = labgob.NewEncoder(rf.logWriter)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -379,6 +445,7 @@ func (rf *Raft) runCandidate() {
 	}
 	rf.term++
 	rf.votedFor = rf.me
+	rf.persist()
 
 	// construct RequestVoteArgs
 	lastEntry := rf.logStorage.Last()
@@ -424,6 +491,7 @@ func (rf *Raft) runCandidate() {
 				rf.term = reply.Term
 				rf.role = Follower
 				rf.votedFor = -1
+				rf.persist()
 				rf.lastHeartbeatTime = time.Now()
 
 				voteResultCh <- false
@@ -484,8 +552,12 @@ func (rf *Raft) runLeader() {
 		rf.matchIndex[i] = 0
 
 		// trigger first heartbeat
+		server := i
 		rf.goFunc(func() {
-			rf.triggerSyncChs[i] <- struct{}{}
+			select {
+			case rf.triggerSyncChs[server] <- struct{}{}:
+			default:
+			}
 		})
 	}
 	rf.mu.Unlock()
@@ -583,6 +655,7 @@ func (rf *Raft) syncLogEntries(server int) {
 		rf.term = reply.Term
 		rf.role = Follower
 		rf.votedFor = -1
+		rf.persist()
 		rf.lastHeartbeatTime = time.Now()
 		rf.mu.Unlock()
 		return
@@ -621,8 +694,14 @@ func (rf *Raft) syncLogEntries(server int) {
 			DPrintf("server %d update commitIndex to %d", rf.me, rf.commitIndex)
 			// trigger applyWorker
 			rf.goFunc(func() {
-				rf.triggerApplyCh <- struct{}{}
+				select {
+				case rf.triggerApplyCh <- struct{}{}:
+				default:
+				}
 			})
+
+			// persist state
+			rf.persist()
 		}
 	} else {
 		// if AppendEntries fails because of log inconsistency: decrement nextIndex and retry
